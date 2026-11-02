@@ -1,0 +1,1246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Home</title>
+<meta name="theme-color" content="#e7eaf7">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8F%A0%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://www.google.com">
+<link rel="preconnect" href="https://t1.gstatic.com" crossorigin>
+<link rel="preload" as="image" href="https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png" fetchpriority="high">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- ফন্ট পেজ আঁকা আটকায় না: আগে পেজ দেখায়, ফন্ট এলে বদলে যায় -->
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Google+Sans+Flex:wght@400;500&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap">
+</noscript>
+<style>
+  html{background:#e7eaf7}
+  html,body{margin:0;height:100%;overflow:hidden}
+  body{background:transparent}
+</style>
+<script>
+  /* আগের থিমের রঙ সঙ্গে সঙ্গে বসানো (সাদা ফ্ল্যাশ ঠেকাতে) */
+  try { var b = localStorage.getItem('hs_bg'); if (b) document.documentElement.style.background = b; } catch (e) {}
+</script>
+</head>
+<body>
+<noscript>JavaScript চালু করুন।</noscript>
+<script>
+/*
+ * Custom Home Screen — একক index.html
+ * ব্যবহার: GitHub Pages (বা যেকোনো হোস্টিং) এ index.html আপলোড করে সেই URL ব্রাউজারের Homepage / New tab হিসেবে সেট করুন।
+ * ডেটা (ওয়ালপেপার, শর্টকাট, থিম) ওই সাইটের localStorage এ থাকে। অন্য সাইট থেকে খবর/আইকন আনতে CORS প্রক্সি ব্যবহার হয়।
+ */
+(function () {
+  'use strict';
+
+  /* ---------- Storage (localStorage) ---------- */
+  function loadVal(k, d) {
+    try { const v = localStorage.getItem('hs:' + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; }
+  }
+  function saveVal(k, v) {
+    try {
+      if (v === null || v === undefined) localStorage.removeItem('hs:' + k);
+      else localStorage.setItem('hs:' + k, JSON.stringify(v));
+      return true;
+    } catch (e) { return false; }
+  }
+
+  /* ---------- Network (CORS প্রক্সি সহ) ---------- */
+  // অন্য সাইটের RSS/পেজ সরাসরি পড়া যায় না (CORS)। আগে সরাসরি চেষ্টা, না হলে এই প্রক্সিগুলো।
+  // ফলব্যাক হিসেবে পাবলিক CORS প্রক্সি (প্রধান পথ নিচের নিজস্ব Worker)।
+  const PROXIES = [
+    { f: (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u) },
+    { f: (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u) },
+    { f: (u) => 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(u) },
+    { f: (u) => 'https://api.allorigins.win/get?url=' + encodeURIComponent(u), unwrap: true },
+    { f: (u) => 'https://thingproxy.freeboard.io/fetch/' + u },
+  ];
+  // আপনার নিজের Cloudflare Worker (সেটিংয়ে দেখানো হয় না)। শুধু নিউজ সোর্সগুলোর জন্য — Worker এর অনুমোদিত তালিকার সাথে মেলানো।
+  const WORKER = 'https://tiny-butterfly-e68f.pradipmodak203.workers.dev/?url=';
+  const WORKER_HOSTS = ['bengali.abplive.com', 'eisamay.com', 'tv9bangla.com', 'bengali.asianetnews.com', 'feeds.bbci.co.uk', 'bbc.com', 'banglahunt.com', 'zeenews.india.com', 'news.google.com', 'bing.com', 'bing.biturl.top'];
+  function viaWorker(u) {
+    try { const hn = new URL(u).hostname.toLowerCase(); return WORKER_HOSTS.some((d) => hn === d || hn.endsWith('.' + d)); } catch (e) { return false; }
+  }
+  const directBlocked = {};
+  let goodProxy = 0;
+  let active = 0;
+  const waitQ = [];
+  // কাজগুলো gap ms পরপর শুরু হয় (আগেরটা ব্যর্থ হলে সঙ্গে সঙ্গে পরেরটা); প্রথম সফল উত্তরই নেওয়া হয়
+  function staggered(tasks, gap) {
+    return new Promise((resolve, reject) => {
+      let started = 0, failed = 0, done = false, firstErr, timer;
+      const next = () => {
+        if (done || started >= tasks.length) return;
+        clearTimeout(timer);
+        const t = tasks[started++];
+        timer = setTimeout(next, gap);
+        t().then(
+          (v) => { if (!done) { done = true; clearTimeout(timer); resolve(v); } },
+          (e) => {
+            if (!firstErr) firstErr = e;
+            if (++failed === tasks.length) { done = true; clearTimeout(timer); reject(firstErr); } else next();
+          });
+      };
+      next();
+    });
+  }
+  function firstOk(promises) {
+    return new Promise((resolve, reject) => {
+      let n = promises.length, first = null;
+      if (!n) return reject(new Error('none'));
+      promises.forEach((p) => p.then(resolve, (e) => { if (!first) first = e; if (--n === 0) reject(first); }));
+    });
+  }
+  async function fetchOnce(u, t, ms, ok, unwrap) {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), ms);
+    try {
+      const r = await fetch(u, { signal: ctrl.signal, credentials: 'omit' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const out = t === 'blob' ? { response: await r.blob() } : { responseText: await r.text() };
+      if (unwrap) {
+        try { out.responseText = JSON.parse(out.responseText).contents || ''; } catch (e) { throw new Error('bad json'); }
+      }
+      out.finalUrl = r.url;
+      if (ok && !ok(out)) throw new Error('invalid');
+      return out;
+    } finally { clearTimeout(to); }
+  }
+  // আগে সরাসরি; CORS এ আটকালে প্রক্সি (নিজেরটা আগে)
+  async function netFetchInner(url, type, ok) {
+    const t = type || 'text';
+    let origin = '';
+    try { origin = new URL(url).origin; } catch (e) { /* ignore */ }
+    if (viaWorker(url)) {
+      try {
+        const r = await fetchOnce(WORKER + encodeURIComponent(url), t, 9000, ok);
+        r.finalUrl = url;
+        return r;
+      } catch (e) { /* ফলব্যাক: সরাসরি / পাবলিক প্রক্সি */ }
+    }
+    if (directBlocked[origin] !== true) {
+      try { return await fetchOnce(url, t, 7000, ok); } catch (e) { if (e instanceof TypeError) directBlocked[origin] = true; }
+    }
+    const pub = PROXIES.filter((p) => !(t === 'blob' && p.unwrap));
+    const rot = pub.map((_, i) => pub[(goodProxy + i) % pub.length]);
+    const list = rot;
+    const tasks = list.map((p) => () => fetchOnce(p.f(url), t, 9000, ok, p.unwrap).then((r) => { goodProxy = Math.max(0, pub.indexOf(p)); return r; }));
+    const out = await staggered(tasks, 1500);
+    out.finalUrl = url;
+    return out;
+  }
+  async function netFetch(url, type, ok) {
+    if (active >= 8) await new Promise((r) => waitQ.push(r));
+    active++;
+    try { return await netFetchInner(url, type, ok); } finally { active--; const n = waitQ.shift(); if (n) n(); }
+  }
+
+  /* ---------- Storage ---------- */
+  const DEFAULTS = {
+    shortcuts: [
+      { id: 1, name: 'YouTube', url: 'https://www.youtube.com' },
+      { id: 2, name: 'Facebook', url: 'https://www.facebook.com' },
+      { id: 3, name: 'DuckDuckGo', url: 'https://duckduckgo.com' },
+    ],
+    autoTheme: true,
+    color: '#e91e63',
+    hue: 226,
+    sat: 52,
+    showBar: true,
+    daily: false,
+    lastRefresh: '',
+    hidden: [],
+  };
+  let S = Object.assign({}, DEFAULTS, loadVal('hs_state', {}));
+  let WALL = loadVal('hs_wall', null);
+  const save = () => saveVal('hs_state', S);
+
+  /* ---------- Helpers ---------- */
+  const NS = 'http://www.w3.org/2000/svg';
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+  function h(tag, props = {}, ...kids) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(props)) {
+      if (k === 'class') el.className = v;
+      else if (k === 'text') el.textContent = v;
+      else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+      else el.setAttribute(k, v);
+    }
+    kids.flat().forEach((c) => c != null && el.append(c));
+    return el;
+  }
+  function svg(d, cls, vb) {
+    const s = document.createElementNS(NS, 'svg');
+    s.setAttribute('viewBox', vb || '0 -960 960 960');
+    if (cls) s.setAttribute('class', cls);
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', d);
+    s.append(p);
+    return s;
+  }
+  function googleG() {
+    const s = document.createElementNS(NS, 'svg');
+    s.setAttribute('viewBox', '0 0 48 48');
+    s.setAttribute('class', 'g');
+    [
+      ['#FFC107', 'M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z'],
+      ['#FF3D00', 'M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z'],
+      ['#4CAF50', 'M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z'],
+      ['#1976D2', 'M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l.003-.002 6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z'],
+    ].forEach(([fill, d]) => {
+      const p = document.createElementNS(NS, 'path');
+      p.setAttribute('fill', fill);
+      p.setAttribute('d', d);
+      s.append(p);
+    });
+    return s;
+  }
+  const ICON = {
+    // Google Material Symbols (Outlined, weight 400) — viewBox "0 -960 960 960"
+    mic: 'M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z', // 24x24 viewBox
+    home: 'M240-200h120v-240h240v240h120v-360L480-740 240-560v360Zm-80 80v-480l320-240 320 240v480H520v-240h-80v240H160Zm320-350Z',
+    plus: 'M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z',
+    more: 'M480-160q-33 0-56.5-23.5T400-240q0-33 23.5-56.5T480-320q33 0 56.5 23.5T560-240q0 33-23.5 56.5T480-160Zm0-240q-33 0-56.5-23.5T400-480q0-33 23.5-56.5T480-560q33 0 56.5 23.5T560-480q0 33-23.5 56.5T480-400Zm0-240q-33 0-56.5-23.5T400-720q0-33 23.5-56.5T480-800q33 0 56.5 23.5T560-720q0 33-23.5 56.5T480-640Z',
+    image: 'M200-120q-33 0-56.5-23.5T120-200v-560q0-33 23.5-56.5T200-840h560q33 0 56.5 23.5T840-760v560q0 33-23.5 56.5T760-120H200Zm0-80h560v-560H200v560Zm40-80h480L570-480 450-320l-90-120-120 160Zm-40 80v-560 560Z',
+    palette: 'M196 -820h208a56 56 0 0 1 56 56v208a56 56 0 0 1 -56 56h-208a56 56 0 0 1 -56-56v-208a56 56 0 0 1 56-56zM212 -760a12 12 0 0 0 -12 12v176a12 12 0 0 0 12 12h176a12 12 0 0 0 12-12v-176a12 12 0 0 0 -12-12zM556 -820h208a56 56 0 0 1 56 56v208a56 56 0 0 1 -56 56h-208a56 56 0 0 1 -56-56v-208a56 56 0 0 1 56-56zM572 -760a12 12 0 0 0 -12 12v176a12 12 0 0 0 12 12h176a12 12 0 0 0 12-12v-176a12 12 0 0 0 -12-12zM196 -460h208a56 56 0 0 1 56 56v208a56 56 0 0 1 -56 56h-208a56 56 0 0 1 -56-56v-208a56 56 0 0 1 56-56zM212 -400a12 12 0 0 0 -12 12v176a12 12 0 0 0 12 12h176a12 12 0 0 0 12-12v-176a12 12 0 0 0 -12-12zM556 -460h208a56 56 0 0 1 56 56v208a56 56 0 0 1 -56 56h-208a56 56 0 0 1 -56-56v-208a56 56 0 0 1 56-56zM572 -400a12 12 0 0 0 -12 12v176a12 12 0 0 0 12 12h176a12 12 0 0 0 12-12v-176a12 12 0 0 0 -12-12z', // 2x2 rounded-square grid (theme icon)
+    del: 'M280-120q-33 0-56.5-23.500T200-200v-520h-40v-80h200v-40h240v40h200v80h-40v520q0 33-23.5 56.500T680-120H280Zm400-600H280v520h400v-520ZM360-280h80v-360h-80v360Zm160 0h80v-360h-80v360ZM280-720v520-520Z',
+    edit: 'M120-120v-170l528-527q12-11 26.5-17t30.5-6q16 0 31 6t26 18l55 56q12 11 17.5 26t5.5 30q0 16-5.5 30.500T817-647L290-120H120Z',
+    up: 'M440-160v-487L216-423l-56-57 320-320 320 320-56 57-224-224v487h-80Z',
+    share: 'M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z', // 24x24 viewBox
+    refresh: 'M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q69 0 132 28.5T720-690v-110h80v280H520v-80h168q-32-56-87.5-88T480-720q-100 0-170 70t-70 170q0 100 70 170t170 70q77 0 139-44t87-116h84q-28 106-114 173t-196 67Z',
+    apps: 'M120-520v-320h320v320H120Zm0 400v-320h320v320H120Zm400-400v-320h320v320H520Zm0 400v-320h320v320H520ZM200-600h160v-160H200v160Zm400 0h160v-160H600v160Zm0 400h160v-160H600v160Zm-400 0h160v-160H200v160Zm400-400Zm0 240Zm-240 0Zm0-240Z',
+  };
+
+
+
+  function normUrl(u) {
+    u = (u || '').trim();
+    if (!u) return '';
+    return /^[a-z][a-z0-9+.-]*:\/\//i.test(u) ? u : 'https://' + u;
+  }
+  function hostOf(u) {
+    try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return u; }
+  }
+
+  /* ---------- রঙ ---------- */
+  function rgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+    let hh = 0, s = 0;
+    const l = (mx + mn) / 2;
+    if (mx !== mn) {
+      const d = mx - mn;
+      s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+      if (mx === r) hh = (g - b) / d + (g < b ? 6 : 0);
+      else if (mx === g) hh = (b - r) / d + 2;
+      else hh = (r - g) / d + 4;
+      hh *= 60;
+    }
+    return [hh, s, l];
+  }
+  function hexToHs(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(hex);
+    if (!m) return [335, 70];
+    const n = parseInt(m[1], 16);
+    const [hh, s] = rgbToHsl((n >> 16) & 255, (n >> 8) & 255, n & 255);
+    return [Math.round(hh), Math.round(s * 100)];
+  }
+  function hslToHex(hh, s, l) {
+    s /= 100; l /= 100;
+    const k = (n) => (n + hh / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const f = (n) => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))));
+    return '#' + [f(0), f(8), f(4)].map((x) => x.toString(16).padStart(2, '0')).join('');
+  }
+  // ইমেজ থেকে প্রধান রঙ (সবচেয়ে "রঙিন" অংশ)
+  function dominantColor(img) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 48;
+    const x = c.getContext('2d', { willReadFrequently: true });
+    x.drawImage(img, 0, 0, 48, 48);
+    const data = x.getImageData(0, 0, 48, 48).data;
+    const B = 24, sums = new Array(B).fill(0), px = [];
+    for (let i = 0; i < data.length; i += 4) {
+      const [hh, s, l] = rgbToHsl(data[i], data[i + 1], data[i + 2]);
+      const w = s * (1 - Math.abs(2 * l - 1));
+      if (w < 0.02) continue;
+      px.push([hh, s, w]);
+      sums[Math.floor(hh / 15) % B] += w;
+    }
+    if (!px.length) return [220, 12];
+    let best = 0, bv = -1;
+    for (let b = 0; b < B; b++) {
+      const v = sums[b] + sums[(b + 1) % B] + sums[(b + B - 1) % B];
+      if (v > bv) { bv = v; best = b; }
+    }
+    let sx = 0, sy = 0, ss = 0, sw = 0;
+    px.forEach(([hh, s, w]) => {
+      const b = Math.floor(hh / 15) % B;
+      const dist = Math.min((b - best + B) % B, (best - b + B) % B);
+      if (dist <= 1) {
+        sx += Math.cos((hh * Math.PI) / 180) * w;
+        sy += Math.sin((hh * Math.PI) / 180) * w;
+        ss += s * w; sw += w;
+      }
+    });
+    let hue = (Math.atan2(sy, sx) * 180) / Math.PI;
+    if (hue < 0) hue += 360;
+    return [Math.round(hue), Math.round((ss / sw) * 100)];
+  }
+
+  /* ---------- UI তৈরি ---------- */
+  const host = document.createElement('div');
+  const root = host.attachShadow({ mode: 'open' });
+
+  const CSS = `
+:host{all:initial;visibility:visible;position:fixed;inset:0;z-index:2147483647;display:block;
+  font-family:"Google Sans Flex","Google Sans","Google Sans Text","Product Sans",Roboto,Arial,sans-serif;
+  font-size:calc(min(100vw,480px) / 39);color:var(--text);
+  --card:hsla(335,60%,97%,.94);--circle:hsl(335,80%,93%);--bar:hsl(335,70%,93%);
+  --text:hsl(335,12%,26%);--ink:hsl(335,20%,16%);--accent:hsl(335,60%,40%);--sheet:hsl(335,60%,97%)}
+*{box-sizing:border-box}
+.wall{position:absolute;inset:0;background-size:cover;background-position:center;background-repeat:no-repeat;
+  background-image:linear-gradient(180deg,var(--g1,#a8346f) 0%,var(--g2,#ff6fa8) 100%)}
+.page{position:absolute;inset:0;overflow-y:auto;display:flex;flex-direction:column;align-items:center;padding-bottom:6em}
+.col{width:100%;max-width:48em;display:flex;flex-direction:column;align-items:center}
+.logo{margin-top:11.3em;width:17.5em;height:auto;display:block;filter:brightness(0) invert(1);user-select:none;-webkit-user-drag:none}
+:host(.lightbg) .logo{filter:none}
+:host(.lightbg) .logo-txt{color:#4285f4}
+:host(.lightbg) .topbtn{color:var(--ink)}
+:host(.lightbg) .topbtn svg{filter:none}
+:host(.lightbg) .search{box-shadow:none;border:0}
+.logo-txt{margin-top:2.17em;height:1.13em;color:#fff;font-size:5.2em;line-height:1.1;font-weight:500;display:none}
+.search{margin-top:2.05em;width:calc(100% - 3.5em);height:7.7em;background:var(--search,rgba(255,255,255,.97));border-radius:3.85em;
+  display:flex;align-items:center;gap:1.8em;padding:0 2.5em 0 1.8em;box-shadow:none}
+.search .g{width:2.4em;height:2.4em;flex:none}
+.search input{flex:1;min-width:0;border:0;outline:0;background:transparent;font-family:inherit;font-size:1.8em;color:#1f1f1f;padding:0}
+.search input::placeholder{color:#1f1f1f;opacity:1}
+.mic{width:2.8em;height:2.8em;flex:none;border:0;padding:0;background:none;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.mic svg{width:70%;height:70%;fill:#1f1f1f}
+.quick{margin-top:.87em;width:calc(100% - 3.5em);display:flex;gap:.87em}
+.qbtn{flex:1;min-width:0;height:4.73em;border:0;border-radius:2.4em;background:var(--search,#c5d1ef);color:var(--ink);font-family:inherit;font-size:1em;
+  display:flex;align-items:center;justify-content:center;gap:1.2em;padding:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.qbtn:active{filter:brightness(.96)}
+.qbtn svg{width:2.2em;height:2.2em;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.qbtn svg .fill{fill:currentColor;stroke:none}
+.qbtn span{font-size:1.65em;font-weight:500;white-space:nowrap}
+.card{margin-top:1.7em;width:calc(100% - 3.5em);background:var(--card);border-radius:3em;padding:2.5em 1.5em 2.4em;
+  display:flex;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.card::-webkit-scrollbar{display:none}
+.card .tile{flex:0 0 25%}
+.tile{position:relative;transition:transform .15s ease;display:flex;flex-direction:column;align-items:center;min-width:0;text-decoration:none;color:var(--text);
+  cursor:pointer;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.tile.lift{transform:scale(1.1);z-index:2;transition:none;filter:drop-shadow(0 .4em .8em rgba(0,0,0,.3))}
+.circle{width:5.1em;height:5.1em;border-radius:50%;background:var(--circle);display:flex;align-items:center;justify-content:center;overflow:hidden}
+.circle img{width:2.6em;height:2.6em;object-fit:contain;border-radius:.4em;-webkit-user-drag:none;pointer-events:none}
+.circle svg{width:2.6em;height:2.6em;fill:var(--text)}
+.circle .ltr{font-size:2.4em;font-weight:500;color:var(--accent)}
+.label{margin-top:.9em;font-size:1.25em;line-height:1.3;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topbar{position:absolute;top:calc(1.4em + env(safe-area-inset-top,0px));right:1.4em;display:flex;align-items:center;gap:.2em;z-index:4}
+.topbtn{width:2.64em;height:2.64em;border:0;padding:0;background:none;color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.topbtn svg{width:1.68em;height:1.68em;fill:currentColor;filter:drop-shadow(0 .05em .2em rgba(0,0,0,.55))}
+.menuscrim{position:absolute;inset:0;z-index:5;display:none}
+.menuscrim.open{display:block}
+.menu{position:absolute;top:calc(4.8em + env(safe-area-inset-top,0px));right:1.4em;min-width:24em;background:var(--sheet);border-radius:1.8em;padding:.8em 0;
+  box-shadow:0 .4em 2em rgba(0,0,0,.3);display:none;z-index:6}
+.menu.open{display:block}
+.mi{display:flex;align-items:center;gap:1em;width:100%;border:0;background:none;padding:.9em 1.6em;font-size:1.5em;font-family:inherit;color:var(--ink);text-align:left;cursor:pointer}
+.mi svg{width:1.6em;height:1.6em;fill:var(--ink);flex:none}
+.mi:active{background:var(--circle)}
+.sep{height:.1em;background:var(--circle);margin:.6em 0}
+.swatches{display:flex;flex-wrap:wrap;gap:1em;margin:1em 0 1.4em}
+.sw{width:4em;height:4em;border-radius:50%;border:.3em solid transparent;outline:.1em solid rgba(0,0,0,.15);cursor:pointer;padding:0}
+.sw.on{border-color:#fff;outline:.3em solid var(--ink)}
+.scrim{position:absolute;inset:0;background:rgba(0,0,0,.45);display:none;z-index:5}
+.scrim.open{display:flex;align-items:flex-end;justify-content:center}
+.sheet{width:100%;max-width:48em;background:var(--sheet);color:var(--text);border-radius:2.8em 2.8em 0 0;padding:2.4em 2em 3em;max-height:88%;overflow:auto}
+.sheet.theme{height:3in;max-height:88%}
+.sheet.big{font-size:1.15em;max-width:41.7em}
+.sheet h3{margin:0 0 1.2em;font-size:1.9em;font-weight:500;color:var(--ink)}
+.field{display:block;margin-bottom:1.2em;font-size:1.35em}
+.field span{display:block;margin-bottom:.4em;opacity:.8}
+.field input[type=text],.field input[type=url]{width:100%;border:.08em solid var(--accent);border-radius:.8em;padding:.7em .9em;font-size:1em;font-family:inherit;background:#fff;color:#222;outline:0}
+.row{display:flex;gap:1em;flex-wrap:wrap;margin-top:1em}
+.btn{border:0;border-radius:2em;padding:.9em 1.6em;font-size:1.5em;font-family:inherit;background:var(--accent);color:#fff;cursor:pointer}
+.btn.ghost{background:var(--circle);color:var(--ink)}
+.btn.danger{background:#c62828}
+.set{display:flex;justify-content:space-between;align-items:center;font-size:1.5em;margin:.7em 0;min-height:1.8em}
+.set input[type=checkbox]{width:1.3em;height:1.3em;accent-color:var(--accent)}
+.set input[type=color]{font:inherit;width:2.5em;height:2.5em;border:0;border-radius:50%;background:none;padding:0;cursor:pointer;-webkit-appearance:none;appearance:none;overflow:hidden}
+.set input[type=color]::-webkit-color-swatch-wrapper{padding:0}
+.set input[type=color]::-webkit-color-swatch{border:.15em solid rgba(0,0,0,.2);border-radius:50%}
+.set input[type=color]::-moz-color-swatch{border:.15em solid rgba(0,0,0,.2);border-radius:50%}
+.item{display:flex;align-items:center;gap:.6em;font-size:1.5em;margin:.5em 0}
+.item b{flex:1;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item button{border:0;border-radius:.7em;background:var(--circle);color:var(--ink);width:1.9em;height:1.9em;padding:0;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.item button svg{width:1.1em;height:1.1em;fill:currentColor}
+.btn svg{width:1.2em;height:1.2em;fill:currentColor;vertical-align:-.22em;margin-right:.4em}
+.note{font-size:1.2em;opacity:.7;margin-top:1em}
+.rcard{display:flex;align-items:center;justify-content:space-between;background:var(--circle);border-radius:2.6em;padding:0 2.6em 0 2.4em;height:6.9em;margin-bottom:2.6em}
+.rcard span{font-size:1.8em;color:var(--ink)}
+.sw3{position:relative;flex:none;width:5em;height:3em;border-radius:1.5em;border:.2em solid var(--outline,#85737a);background:rgba(255,255,255,.35);cursor:pointer;padding:0;transition:background .15s}
+.sw3::after{content:'';position:absolute;top:50%;left:.6em;width:1.4em;height:1.4em;border-radius:50%;background:var(--outline,#85737a);transform:translateY(-50%)}
+.sw3.on{background:var(--accent);border-color:var(--accent)}
+.sw3.on::after{left:auto;right:.3em;width:2.1em;height:2.1em;background:#fff}
+.pal{display:grid;grid-template-columns:repeat(4,1fr);gap:1.8em 0;justify-items:center;margin:0 0 2em}
+.pc{width:3.78em;height:3.78em;border-radius:50%;border:0;padding:0;cursor:pointer;outline:.3em solid transparent;outline-offset:.3em}
+.pc.on{outline-color:var(--accent)}
+.feed{margin-top:1.6em;width:calc(100% - 3.5em);background:var(--card);border-radius:3em;overflow:hidden}
+.fi{cursor:pointer;border-top:.1em solid var(--circle);-webkit-tap-highlight-color:transparent}
+.fi:first-child{border-top:0}
+.fa{display:flex;gap:1.6em;align-items:flex-start;padding:2.2em 2em 0}
+.ft{flex:1;min-width:0;font-size:2.1em;line-height:1.32;color:var(--ink);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;word-break:break-word}
+.ft.fbt{padding:.7em 1em 0;font-size:2em;-webkit-line-clamp:2}
+.fthumb{width:7.7em;height:7.7em;border-radius:2em;object-fit:cover;flex:none;background:var(--circle)}
+.fimg{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:var(--circle)}
+.fmeta{display:flex;align-items:center;gap:.5em;padding:1.1em 1.1em 1.1em 1.2em;font-size:1.5em;color:var(--text)}
+.fav{width:1.4em;height:1.4em;border-radius:50%;object-fit:cover;background:#fff;flex:none;margin-right:.2em}
+.fsrc{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.fgap{flex:1}
+.fbtn{width:2.4em;height:2.4em;border:0;background:none;padding:0;color:var(--text);display:flex;align-items:center;justify-content:center;cursor:pointer;border-radius:50%;flex:none}
+.fbtn svg{width:1.4em;height:1.4em;fill:currentColor}
+.fmsg{padding:3em 2em;font-size:1.6em;color:var(--text);text-align:center}
+`;
+  try {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(CSS);
+    root.adoptedStyleSheets = [sheet];
+  } catch (e) {
+    const st = document.createElement('style');
+    st.textContent = CSS;
+    root.append(st);
+  }
+
+  /* --- ওয়ালপেপার --- */
+  const wall = h('div', { class: 'wall' });
+
+  /* --- লোগো --- */
+  const logoTxt = h('div', { class: 'logo-txt', text: 'Google' });
+  const logo = h('img', {
+    class: 'logo',
+    alt: 'Google',
+    src: 'https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png',
+    draggable: 'false',
+  });
+  logo.addEventListener('error', () => { logo.style.display = 'none'; logoTxt.style.display = 'block'; });
+
+  /* --- সার্চ বার --- */
+  const input = h('input', { type: 'text', placeholder: 'Search Google or type URL', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', enterkeyhint: 'search' });
+  function go(q) {
+    q = (q || '').trim();
+    if (!q) return;
+    if (/^https?:\/\/\S+$/i.test(q) || /^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(q)) {
+      location.href = /^https?:\/\//i.test(q) ? q : 'https://' + q;
+    } else {
+      location.href = 'https://www.google.com/search?q=' + encodeURIComponent(q);
+    }
+  }
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(input.value); });
+  const mic = h('button', { class: 'mic', 'aria-label': 'Voice search' }, svg(ICON.mic, '', '0 0 24 24'));
+  mic.addEventListener('click', () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { input.focus(); return; }
+    try {
+      const r = new SR();
+      r.lang = navigator.language || 'en-US';
+      r.onresult = (e) => { input.value = e.results[0][0].transcript; go(input.value); };
+      r.start();
+    } catch (err) { input.focus(); }
+  });
+  const search = h('div', { class: 'search' }, googleG(), input, mic);
+
+  /* --- সার্চ বারের নিচে AI Mode ও Incognito কার্ড --- */
+  function qIcon(parts) {
+    const s = document.createElementNS(NS, 'svg');
+    s.setAttribute('viewBox', '0 0 24 24');
+    parts.forEach(([tag, attrs, cls]) => {
+      const el = document.createElementNS(NS, tag);
+      Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+      if (cls) el.setAttribute('class', cls);
+      s.append(el);
+    });
+    return s;
+  }
+  // AI Mode: ম্যাগনিফাইং গ্লাস + স্পার্কল
+  const aiIcon = () => qIcon([
+    ['circle', { cx: 10.5, cy: 11.5, r: 6 }],
+    ['path', { d: 'M15 16l5.5 5.5' }],
+    ['path', { d: 'M19 1c.4 2.6 1.4 3.6 4 4c-2.6.4-3.6 1.4-4 4c-.4-2.6-1.4-3.6-4-4c2.6-.4 3.6-1.4 4-4z' }, 'fill'],
+  ]);
+  // Incognito: টুপি + চশমা
+  const incIcon = () => qIcon([
+    ['path', { d: 'M7 10l1.8-5.5h6.4L17 10' }],
+    ['path', { d: 'M3.5 10h17' }],
+    ['circle', { cx: 7.5, cy: 16.5, r: 3 }],
+    ['circle', { cx: 16.5, cy: 16.5, r: 3 }],
+    ['path', { d: 'M10.5 16c1-.8 2-.8 3 0' }],
+  ]);
+  const aiBtn = h('button', { class: 'qbtn', 'aria-label': 'AI Mode' }, aiIcon(), h('span', { text: 'AI Mode' }));
+  aiBtn.addEventListener('click', () => {
+    const q = (input.value || '').trim();
+    location.href = 'https://www.google.com/search?udm=50' + (q ? '&q=' + encodeURIComponent(q) : '');
+  });
+  const incBtn = h('button', { class: 'qbtn', 'aria-label': 'Incognito' }, incIcon(), h('span', { text: 'Incognito' }));
+  incBtn.addEventListener('click', () => openIncognito());
+  const quick = h('div', { class: 'quick' }, aiBtn, incBtn);
+
+  /* --- স্পিড ডায়াল কার্ড --- */
+  const card = h('div', { class: 'card' });
+  const feedEl = h('div', { class: 'feed' });
+  let dragActive = false;
+  card.addEventListener('touchmove', (e) => { if (dragActive && e.cancelable) e.preventDefault(); }, { passive: false });
+
+  /* ---------- আসল favicon আনা (সাইটের নিজের আইকন) ---------- */
+  function blobToDataURL(b) {
+    return new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onload = () => res(fr.result);
+      fr.onerror = rej;
+      fr.readAsDataURL(b);
+    });
+  }
+  async function iconCandidates(pageUrl) {
+    const found = [];
+    let base = pageUrl;
+    try {
+      const r = await netFetch(pageUrl, 'text', (x) => /<(html|head|meta|link)/i.test(x.responseText.slice(0, 5000)));
+      base = r.finalUrl || pageUrl;
+      const doc = new DOMParser().parseFromString(r.responseText, 'text/html');
+      doc.querySelectorAll('link[rel]').forEach((l) => {
+        const rel = (l.getAttribute('rel') || '').toLowerCase();
+        if (!/icon/.test(rel) || /mask/.test(rel)) return;
+        const href = l.getAttribute('href');
+        if (!href) return;
+        let size = 16;
+        const sz = (l.getAttribute('sizes') || '').match(/\d+x\d+/g);
+        if (sz) size = Math.max(...sz.map((x) => parseInt(x, 10)));
+        else if (/apple/.test(rel)) size = 180;
+        else if (/svg/.test(l.getAttribute('type') || '') || /\.svg/i.test(href)) size = 256;
+        try { found.push({ url: new URL(href, base).href, size }); } catch (e) { /* ignore */ }
+      });
+    } catch (e) { /* ignore */ }
+    found.sort((a, b) => b.size - a.size);
+    const urls = found.map((f) => f.url);
+    try { urls.push(new URL('/favicon.ico', base).href); } catch (e) { /* ignore */ }
+    urls.push('https://www.google.com/s2/favicons?sz=128&domain_url=' + encodeURIComponent(pageUrl));
+    return Array.from(new Set(urls));
+  }
+  // ছবি লোড করে আসল পিক্সেল-প্রস্থ মাপা (ছোট/ঝাপসা আইকন বাদ দিতে)
+  function probeImg(url) {
+    return new Promise((res, rej) => {
+      const i = new Image();
+      i.referrerPolicy = 'no-referrer';
+      i.onload = () => res({ url, w: i.naturalWidth || 256 }); // SVG হলে যেকোনো মাপে পরিষ্কার
+      i.onerror = rej;
+      i.src = url;
+    });
+  }
+  const gIcon = (u, size) => 'https://t1.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url=' + encodeURIComponent(u) + '&size=' + size;
+  // সব candidate একসাথে মেপে সবচেয়ে বড় (পরিষ্কার) টা নেয়; ৬৪px এর নিচে হলে null (তখন Google এর ১২৮px আইকনই থাকে)
+  async function getFavicon(pageUrl) {
+    const cands = (await iconCandidates(pageUrl)).slice(0, 8).concat([gIcon(pageUrl, 256)]);
+    const results = await Promise.all(cands.map((u) => probeImg(u).catch(() => null)));
+    let best = null;
+    results.forEach((r) => { if (r && (!best || r.w > best.w)) best = r; });
+    return best && best.w >= 64 ? best.url : null;
+  }
+  function fetchIcon(item) {
+    item.iconTried = true;
+    item.iconV = 2;
+    getFavicon(item.url).then((d) => {
+      if (d) item.icon = d; else delete item.icon;
+      save();
+      renderTiles();
+    }).catch(() => save());
+  }
+
+  function favicon(s) {
+    const img = h('img', {
+      src: s.icon || gIcon(s.url, 256),
+      alt: '', draggable: 'false',
+    });
+    img.addEventListener('error', () => {
+      const p = img.parentNode;
+      if (p) { img.remove(); p.append(h('span', { class: 'ltr', text: (s.name || '?').charAt(0).toUpperCase() })); }
+    });
+    return img;
+  }
+
+  function renderTiles() {
+    card.replaceChildren();
+    S.shortcuts.forEach((s) => {
+      const a = h('div', { class: 'tile', role: 'link', draggable: 'false' },
+        h('div', { class: 'circle' }, favicon(s)),
+        h('div', { class: 'label', text: s.name }));
+      let t1, t2, auto, pressed = false, armed = false, dragging = false;
+      let sx = 0, sy = 0, lastX = 0, startScroll = 0, idx = 0, target = 0, w = 0;
+      const clearTimers = () => { clearTimeout(t1); clearTimeout(t2); };
+      const resetShift = () => card.querySelectorAll('.tile').forEach((t) => { t.style.transform = ''; });
+      const update = () => {
+        const dx = lastX - sx + (card.scrollLeft - startScroll);
+        a.style.transform = `translateX(${dx}px) scale(1.1)`;
+        target = clamp(idx + Math.round(dx / w), 0, S.shortcuts.length - 1);
+        card.querySelectorAll('.tile').forEach((t, j) => {
+          if (j === idx || j >= S.shortcuts.length) return;
+          let off = 0;
+          if (idx < target && j > idx && j <= target) off = -w;
+          else if (idx > target && j < idx && j >= target) off = w;
+          t.style.transform = off ? `translateX(${off}px)` : '';
+        });
+      };
+      const endDrag = (commit) => {
+        clearInterval(auto);
+        dragActive = false;
+        a.classList.remove('lift');
+        a.style.transform = '';
+        resetShift();
+        if (commit && dragging && target !== idx) {
+          const [it] = S.shortcuts.splice(idx, 1);
+          S.shortcuts.splice(target, 0, it);
+          save(); renderTiles();
+        }
+        armed = false; dragging = false;
+      };
+      a.addEventListener('pointerdown', (e) => {
+        if (e.button > 0) return;
+        pressed = false; armed = false; dragging = false;
+        sx = lastX = e.clientX; sy = e.clientY; startScroll = card.scrollLeft;
+        t1 = setTimeout(() => {
+          armed = true; pressed = true; dragActive = true;
+          a.classList.add('lift');
+          try { a.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+          if (navigator.vibrate) navigator.vibrate(15);
+          idx = S.shortcuts.indexOf(s); target = idx; w = a.getBoundingClientRect().width;
+          // শুধু চেপে ধরে রাখলে (নড়াচড়া ছাড়া) এডিট অপশন
+          t2 = setTimeout(() => { if (!dragging) { endDrag(false); openItemMenu(s); } }, 700);
+        }, 300);
+      });
+      a.addEventListener('pointermove', (e) => {
+        if (!armed) {
+          if (Math.hypot(e.clientX - sx, e.clientY - sy) > 10) clearTimers();
+          return;
+        }
+        lastX = e.clientX;
+        if (!dragging && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) {
+          dragging = true;
+          clearTimeout(t2);
+          auto = setInterval(() => {
+            const r = card.getBoundingClientRect();
+            if (lastX > r.right - 36) card.scrollLeft += 10;
+            else if (lastX < r.left + 36) card.scrollLeft -= 10;
+            else return;
+            update();
+          }, 16);
+        }
+        if (dragging) update();
+      });
+      a.addEventListener('pointerup', () => {
+        clearTimers();
+        if (!armed) return;
+        if (dragging) endDrag(true);
+        else { endDrag(false); openItemMenu(s); }
+      });
+      a.addEventListener('pointercancel', () => { clearTimers(); if (armed) endDrag(false); });
+      a.addEventListener('click', () => { if (pressed) { pressed = false; return; } location.href = s.url; });
+      a.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (e.button === 2) { pressed = true; openItemMenu(s); }
+      });
+      card.append(a);
+    });
+    const add = h('div', { class: 'tile', onclick: () => openForm() },
+      h('div', { class: 'circle' }, svg(ICON.plus)),
+      h('div', { class: 'label', text: 'Add new' }));
+    card.append(add);
+  }
+
+  const page = h('div', { class: 'page' }, h('div', { class: 'col' }, logo, logoTxt, search, quick, card, feedEl));
+
+  /* --- উপরের ডানদিকের ৩ ডট মেনু --- */
+  const menuScrim = h('div', { class: 'menuscrim' });
+  const menu = h('div', { class: 'menu' });
+  const closeMenu = () => { menu.classList.remove('open'); menuScrim.classList.remove('open'); };
+  const mi = (icon, text, fn) => h('button', { class: 'mi', onclick: () => { closeMenu(); fn(); } }, svg(icon), h('span', { text }));
+  function removeWallpaper() {
+    WALL = null; saveVal('hs_wall', null); S.wallUrl = '';
+    if (S.autoTheme) { S.hue = DEFAULTS.hue; S.sat = DEFAULTS.sat; }
+    save(); applyWallpaper(); applyTheme();
+  }
+  menu.append(
+    mi(ICON.image, 'Change wallpaper', () => fileInput.click()),
+    mi(ICON.del, 'Remove wallpaper', removeWallpaper),
+    h('div', { class: 'sep' }),
+    mi(ICON.palette, 'Theme color', () => openTheme()),
+    mi(ICON.refresh, 'Refresh news', () => refreshFeed(true)),
+  );
+  const homeBtn = h('button', {
+    class: 'topbtn', 'aria-label': 'Google',
+    onclick: () => { location.href = 'https://www.google.com/'; },
+  }, svg(ICON.home));
+  const topBtn = h('button', {
+    class: 'topbtn', 'aria-label': 'Menu',
+    onclick: () => { menu.classList.toggle('open'); menuScrim.classList.toggle('open'); },
+  }, svg(ICON.more));
+  const topBar = h('div', { class: 'topbar' }, homeBtn, topBtn);
+  menuScrim.addEventListener('click', closeMenu);
+
+  /* --- Sheet (পপআপ) --- */
+  const sheet = h('div', { class: 'sheet' });
+  const scrim = h('div', { class: 'scrim' }, sheet);
+  scrim.addEventListener('click', (e) => { if (e.target === scrim) closeSheet(); });
+  let nextBig = false, nextTheme = false;
+  function openSheet(title, ...nodes) {
+    sheet.className = 'sheet' + (nextBig ? ' big' : '') + (nextTheme ? ' theme' : '');
+    nextBig = false; nextTheme = false;
+    sheet.replaceChildren(h('h3', { text: title }), ...nodes);
+    scrim.classList.add('open');
+  }
+  function closeSheet() { scrim.classList.remove('open'); }
+
+  /* --- ফাইল ইনপুট (ওয়ালপেপার আপলোড) --- */
+  const fileInput = h('input', { type: 'file', accept: 'image/*' });
+  fileInput.style.display = 'none';
+  function encodeWall(img) {
+    for (const [max, q] of [[1280, 0.8], [1000, 0.75], [800, 0.7]]) {
+      const k = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k);
+      c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      const d = c.toDataURL('image/jpeg', q);
+      if (saveVal('hs_wall', d)) return d;
+    }
+    return null;
+  }
+  // forceAuto: নিজে ওয়ালপেপার বদলালে থিম আবার ওয়ালপেপার থেকে অটো নেওয়া হবে (আগে হাতে রঙ বাছা থাকলেও)
+  function ingestImage(src, done, cors, forceAuto) {
+    const img = new Image();
+    if (cors) img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const w = encodeWall(img);
+        if (!w) { if (done) done(false); return; }
+        WALL = w;
+        if (S.autoTheme || forceAuto) { S.autoTheme = true; S.color = ''; const [hh, ss] = dominantColor(img); S.hue = hh; S.sat = ss; }
+      } catch (e) { if (done) done(false); return; }
+      S.wallUrl = '';
+      save();
+      applyWallpaper();
+      applyTheme();
+      if (done) done(true);
+    };
+    img.onerror = () => { if (done) done(false); };
+    img.src = src;
+  }
+  fileInput.addEventListener('change', () => {
+    const f = fileInput.files && fileInput.files[0];
+    if (!f) return;
+    const fr = new FileReader();
+    fr.onload = () => ingestImage(fr.result, () => closeSheet(), false, true);
+    fr.readAsDataURL(f);
+    fileInput.value = '';
+  });
+
+  /* ---------- Refresh daily (Bing image of the day) ---------- */
+  function todayKey() {
+    const d = new Date();
+    return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
+  }
+  async function getBingUrl() {
+    try {
+      const r = await netFetch('https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=1&mkt=en-US', 'text', (x) => /"images"/.test(x.responseText));
+      return 'https://www.bing.com' + JSON.parse(r.responseText).images[0].urlbase + '_1080x1920.jpg';
+    } catch (e) { /* পরের উৎস */ }
+    try {
+      const r = await netFetch('https://bing.biturl.top/?format=json&index=0&mkt=en-US', 'text', (x) => /"url"/.test(x.responseText));
+      return JSON.parse(r.responseText).url || null;
+    } catch (e) { return null; }
+  }
+  function refreshDaily(force) {
+    if (!S.daily) return;
+    const t = todayKey();
+    if (!force && S.lastRefresh === t) return;
+    getBingUrl().then(async (url) => {
+      if (!url) return;
+      const done = () => { S.lastRefresh = t; save(); };
+      // ১) সরাসরি (CORS অনুমোদিত হলে ক্যানভাসে পড়া যায়)
+      if (await new Promise((res) => ingestImage(url, res, true))) return done();
+      // ২) প্রক্সি দিয়ে ছবির ডেটা এনে
+      try {
+        const r = await netFetch(url, 'blob', (x) => x.response && x.response.size > 2000);
+        const d = await blobToDataURL(r.response);
+        if (await new Promise((res) => ingestImage(d, res))) return done();
+      } catch (e) { /* ৩ নং ধাপ */ }
+      // ৩) শেষ ভরসা: ছবির URL সরাসরি ব্যাকগ্রাউন্ড হিসেবে (থিম রঙ বদলাবে না)
+      WALL = null; saveVal('hs_wall', null);
+      S.wallUrl = url;
+      save(); applyWallpaper(); applyTheme();
+      done();
+    });
+  }
+
+  /* ---------- ফর্ম / মেনু ---------- */
+  function openForm(item) {
+    const name = h('input', { type: 'text', value: item ? item.name : '', placeholder: 'e.g. YouTube' });
+    const url = h('input', { type: 'url', value: item ? item.url : '', placeholder: 'https://example.com', autocapitalize: 'off' });
+    openSheet(item ? 'Edit shortcut' : 'Add shortcut',
+      h('label', { class: 'field' }, h('span', { text: 'Name' }), name),
+      h('label', { class: 'field' }, h('span', { text: 'URL' }), url),
+      h('div', { class: 'row' },
+        h('button', {
+          class: 'btn', text: 'Save', onclick: () => {
+            const u = normUrl(url.value);
+            if (!u) { url.focus(); return; }
+            const n = name.value.trim() || hostOf(u);
+            if (item) {
+              const changed = item.url !== u;
+              item.name = n; item.url = u;
+              if (changed) { delete item.icon; fetchIcon(item); }
+            } else {
+              const it = { id: Date.now(), name: n, url: u };
+              S.shortcuts.push(it);
+              fetchIcon(it);
+            }
+            save(); renderTiles(); closeSheet();
+            card.scrollTo({ left: card.scrollWidth, behavior: 'smooth' });
+          },
+        }),
+        h('button', { class: 'btn ghost', text: 'Cancel', onclick: closeSheet })));
+    setTimeout(() => name.focus(), 50);
+  }
+
+  function openItemMenu(item) {
+    openSheet(item.name,
+      h('div', { class: 'row' },
+        h('button', { class: 'btn', onclick: () => openForm(item) }, svg(ICON.edit), 'Edit'),
+        h('button', {
+          class: 'btn danger', onclick: () => {
+            S.shortcuts = S.shortcuts.filter((x) => x !== item);
+            save(); renderTiles(); closeSheet();
+          },
+        }, svg(ICON.del), 'Delete'),
+        h('button', { class: 'btn ghost', text: 'Cancel', onclick: closeSheet })));
+  }
+
+  // ওয়েব পেজ ব্রাউজারের ইনকগনিটো ট্যাব খুলতে পারে না (ব্রাউজার এটা অনুমতি দেয় না)
+  function openIncognito() {
+    openSheet('Incognito',
+      h('div', { class: 'note', text: 'Web pages are not allowed to open private tabs. Open your browser menu (⋮) and tap “New incognito tab”.' }),
+      h('div', { class: 'row' }, h('button', { class: 'btn ghost', text: 'Close', onclick: closeSheet })));
+  }
+
+  function openManage() {
+    const list = h('div');
+    const draw = () => {
+      list.replaceChildren();
+      S.shortcuts.forEach((s, i) => {
+        list.append(h('div', { class: 'item' },
+          h('b', { text: s.name }),
+          h('button', { 'aria-label': 'Move up', onclick: () => { if (i > 0) { [S.shortcuts[i - 1], S.shortcuts[i]] = [S.shortcuts[i], S.shortcuts[i - 1]]; save(); renderTiles(); draw(); } } }, svg(ICON.up)),
+          h('button', { 'aria-label': 'Edit', onclick: () => openForm(s) }, svg(ICON.edit)),
+          h('button', { 'aria-label': 'Delete', onclick: () => { S.shortcuts.splice(i, 1); save(); renderTiles(); draw(); } }, svg(ICON.del))));
+      });
+      if (!S.shortcuts.length) list.append(h('div', { class: 'note', text: 'No shortcuts yet.' }));
+    };
+    draw();
+    nextBig = true;
+    openSheet('Speed dial', list,
+      h('div', { class: 'row' },
+        h('button', { class: 'btn', onclick: () => openForm() }, svg(ICON.plus), 'Add new'),
+        h('button', { class: 'btn ghost', text: 'Close', onclick: closeSheet })));
+  }
+
+  function openTheme() {
+    const PAL = PALETTE;
+    const shownColor = () => (!S.autoTheme && /^#[0-9a-f]{6}$/i.test(S.color || '') ? S.color : hslToHex(S.hue, clamp(S.sat, 35, 85), 50));
+    const color = h('input', { type: 'color', value: shownColor() });
+    let saveT;
+    const auto = h('input', { type: 'checkbox' });
+    auto.checked = S.autoTheme;
+    const daily = h('button', { class: 'sw3' + (S.daily ? ' on' : ''), role: 'switch', 'aria-checked': String(!!S.daily), 'aria-label': 'Refresh daily' });
+    daily.addEventListener('click', () => {
+      S.daily = !S.daily;
+      daily.classList.toggle('on', S.daily);
+      daily.setAttribute('aria-checked', String(S.daily));
+      save();
+      if (S.daily) refreshDaily(true);
+    });
+    const pal = h('div', { class: 'pal' });
+    const mark = () => {
+      pal.querySelectorAll('.pc').forEach((el) => el.classList.toggle('on', el.dataset.c === 'default'
+        ? (S.autoTheme && ((!WALL && !S.wallUrl) || (S.hue === DEFAULTS.hue && S.sat === DEFAULTS.sat)))
+        : (!S.autoTheme && el.dataset.c === S.color)));
+      color.value = shownColor();
+    };
+    const pick = (hex, soft) => {
+      const [hh, ss] = hexToHs(hex);
+      S.autoTheme = false; auto.checked = false;
+      S.color = hex; S.hue = hh; S.sat = ss;
+      applyTheme(); mark();
+      if (soft) { clearTimeout(saveT); saveT = setTimeout(save, 300); } else save();
+    };
+    const defBtn = h('button', {
+      class: 'pc', 'data-c': 'default', 'aria-label': 'Default',
+      onclick: () => {
+        S.autoTheme = true; auto.checked = true;
+        S.hue = DEFAULTS.hue; S.sat = DEFAULTS.sat; S.color = '';
+        applyTheme(); mark(); save();
+      },
+    });
+    defBtn.style.background = 'linear-gradient(180deg,#e7eaf7 50%,transparent 50%),linear-gradient(90deg,#4a62b0 50%,#c5d1ef 50%)';
+    defBtn.style.boxShadow = 'inset 0 0 0 .08em rgba(0,0,0,.18)';
+    pal.append(defBtn);
+    PAL.forEach(([pri, ter, top]) => {
+      const b = h('button', { class: 'pc', 'data-c': pri, 'aria-label': pri, onclick: () => pick(pri) });
+      b.style.background = `linear-gradient(180deg,${top} 50%,transparent 50%),linear-gradient(90deg,${pri} 50%,${ter} 50%)`;
+      pal.append(b);
+    });
+    // কিছু ব্রাউজারে শুধু 'change' আসে, কিছুতে 'input' — দুটোই ধরা হলো
+    color.addEventListener('input', () => pick(color.value, true));
+    color.addEventListener('change', () => pick(color.value, false));
+    auto.addEventListener('change', () => {
+      S.autoTheme = auto.checked;
+      save();
+      if (auto.checked && WALL) {
+        const img = new Image();
+        img.onload = () => { const [hh, ss] = dominantColor(img); S.hue = hh; S.sat = ss; save(); applyTheme(); mark(); };
+        img.src = WALL;
+      }
+      applyTheme();
+      mark();
+    });
+    mark();
+    nextTheme = true;
+    openSheet('Theme color',
+      h('div', { class: 'rcard' }, h('span', { text: 'Refresh daily' }), daily),
+      pal,
+      h('div', { class: 'set' }, h('span', { text: 'Auto from wallpaper' }), auto),
+      h('div', { class: 'set' }, h('span', { text: 'Custom color' }), color),
+      h('div', { class: 'row' }, h('button', { class: 'btn ghost', text: 'Close', onclick: closeSheet })));
+  }
+
+  /* ---------- Apply ---------- */
+  function applyWallpaper() {
+    const wu = WALL || S.wallUrl;
+    wall.style.backgroundImage = wu ? 'url(' + wu + ')' : '';
+  }
+  function setMeta(color) {
+    let m = document.querySelector('meta[name="theme-color"]');
+    if (!m) {
+      m = document.createElement('meta');
+      m.name = 'theme-color';
+      (document.head || document.documentElement).appendChild(m);
+    }
+    m.content = color;
+  }
+  // [primary, tonal, surface] — Chrome-style color swatches; tonal রঙটাই ওই থিমে সার্চ বার/ক্যাপসুলের রঙ
+  const PALETTE = [
+    ['#3b5f9a', '#c5cae0', '#e1e1ec'], ['#046b61', '#b3cfcb', '#d9e3e1'], ['#3d6b31', '#c5cdbc', '#e0e3da'],
+    ['#5a6256', '#cccbc7', '#e6e4e1'], ['#706000', '#d4cab0', '#ebe2d3'], ['#8d4f1c', '#dfc5b6', '#efe0d9'],
+    ['#934656', '#e0c1c6', '#eddddf'], ['#864b7f', '#dbc3d6', '#ecdce3'], ['#6e5392', '#d4c8dc', '#e8dfe8'],
+  ];
+  // ডিফল্ট লুক (Chrome-এর হালকা নীলচে থিম): ব্যাকগ্রাউন্ড হালকা নীল, সার্চ বার তার চেয়ে গাঢ় নীল, শর্টকাট/ফিড কার্ড সাদা
+  const DEF_LOOK = { h: 226, s: 52, bg: '#e7eaf7', search: '#c5d1ef', circle: '#eaeefb', sheet: '#f6f7fd' };
+  function applyTheme() {
+    const light = !(WALL || S.wallUrl) && !!S.autoTheme; // ওয়ালপেপার নেই + অটো থিম = ডিফল্ট লুক
+    const hh = light ? DEF_LOOK.h : S.hue;
+    const s = light ? DEF_LOOK.s : clamp(S.sat, S.autoTheme ? 35 : 0, 75);
+    host.classList.toggle('lightbg', light);
+    const st = host.style;
+    const g1 = light ? DEF_LOOK.bg : `hsl(${hh},${Math.round(s * 0.6)}%,38%)`;
+    const g2 = light ? DEF_LOOK.bg : `hsl(${hh},${Math.min(100, s + 25)}%,70%)`;
+    st.setProperty('--outline', `hsl(${hh},8%,50%)`);
+    st.setProperty('--card', light ? '#ffffff' : `hsla(${hh},${s}%,97%,.94)`);
+    st.setProperty('--circle', light ? DEF_LOOK.circle : `hsl(${hh},${s}%,92%)`);
+    st.setProperty('--bar', light ? DEF_LOOK.circle : `hsl(${hh},${s}%,93%)`);
+    st.setProperty('--sheet', light ? DEF_LOOK.sheet : `hsl(${hh},${s}%,97%)`);
+    st.setProperty('--text', light ? '#44474f' : `hsl(${hh},14%,27%)`);
+    st.setProperty('--ink', light ? '#1b1c2b' : `hsl(${hh},25%,16%)`);
+    st.setProperty('--accent', `hsl(${hh},${s}%,38%)`);
+    st.setProperty('--g1', g1);
+    st.setProperty('--g2', g2);
+    // সার্চ বার ও AI Mode/Incognito ক্যাপসুল থিমের সাথে বদলায়:
+    //  ডিফল্ট = নীলচে; প্যালেট-সোয়াচ = ওই সোয়াচের tonal রঙ; অটো/কাস্টম = hue থেকে হালকা টোন
+    let searchCol = DEF_LOOK.search;
+    if (!light) {
+      const pe = !S.autoTheme && PALETTE.find((q) => q[0] === S.color);
+      searchCol = pe ? pe[1] : `hsl(${hh},${Math.round(clamp(s, 20, 60) * 0.9)}%,84%)`;
+    }
+    st.setProperty('--search', searchCol);
+    try { setMeta(light ? DEF_LOOK.bg : `hsl(${hh},${s}%,93%)`); } catch (e) { /* ignore */ }
+    try { localStorage.setItem('hs_bg', light ? DEF_LOOK.bg : `linear-gradient(180deg,${g1} 0%,${g2} 100%)`); } catch (e) { /* ignore */ }
+  }
+
+  /* ---------- News feed (auto-updating) ---------- */
+  // প্রতিটি সোর্সের জন্য একাধিক RSS ঠিকানা দেওয়া আছে; প্রথম যেটা কাজ করবে সেটাই ব্যবহার হবে।
+  // কোনোটাই না চললে Google News RSS দিয়ে সেই সাইটের খবর আনবে (ছবি ছাড়া)।
+  const FEEDS = [
+    { id: 'abp', name: 'ABP Ananda', domain: 'bengali.abplive.com', gq: 'site:bengali.abplive.com', home: 'https://bengali.abplive.com/',
+      urls: ['https://bengali.abplive.com/home/feed', 'https://bengali.abplive.com/news/feed', 'https://bengali.abplive.com/feed'] },
+    { id: 'abpe', name: 'ABP Entertainment', domain: 'bengali.abplive.com', gq: 'site:bengali.abplive.com/entertainment', home: 'https://bengali.abplive.com/entertainment',
+      urls: ['https://bengali.abplive.com/entertainment/feed'] },
+    { id: 'eis', name: 'Ei Samay', domain: 'eisamay.com', gq: 'site:eisamay.com', home: 'https://eisamay.com/',
+      urls: ['https://eisamay.com/feed', 'https://www.eisamay.com/feed', 'https://eisamay.com/rss'] },
+    { id: 'tv9', name: 'TV9 Bangla', domain: 'tv9bangla.com', gq: 'site:tv9bangla.com', home: 'https://tv9bangla.com/',
+      urls: ['https://tv9bangla.com/feed', 'https://tv9bangla.com/rss', 'https://tv9bangla.com/feed/'] },
+    { id: 'asia', name: 'Asianet Bangla', domain: 'bengali.asianetnews.com', gq: 'site:bengali.asianetnews.com', home: 'https://bengali.asianetnews.com/',
+      urls: ['https://bengali.asianetnews.com/rss', 'https://bengali.asianetnews.com/feed', 'https://bengali.asianetnews.com/rss/latest-news'] },
+    { id: 'bbc', name: 'BBC Bangla', domain: 'bbc.com', gq: 'site:bbc.com/bengali', home: 'https://www.bbc.com/bengali', scope: '/bengali',
+      urls: ['https://feeds.bbci.co.uk/bengali/rss.xml'] },
+    { id: 'bh', name: 'Bangla Hunt', domain: 'banglahunt.com', gq: 'site:banglahunt.com', home: 'https://banglahunt.com/',
+      urls: ['https://banglahunt.com/feed', 'https://www.banglahunt.com/feed'] },
+    { id: 'z24', name: 'Zee 24 Ghanta', domain: 'zeenews.india.com', gq: 'site:zeenews.india.com/bengali', home: 'https://zeenews.india.com/bengali', scope: '/bengali',
+      urls: ['https://zeenews.india.com/bengali/rss.xml', 'https://zeenews.india.com/bengali/feed', 'https://zeenews.india.com/bengali/rss/latest-news.xml'] },
+  ];
+  // RSS ঠিকানা কাজ না করলে সাইটের হোমপেজ থেকে খবরের লিংক/শিরোনাম/ছবি তুলে আনা হয়; তাও না হলে Google News।
+  const FEED_TTL = 5 * 60 * 1000; // ১৫ মিনিটের পুরনো হলে নতুন করে আনবে
+  const PER_SOURCE = 7;
+  let FEED = [], FEED_T = 0, feedBusy = false;
+
+  function decodeHtml(str) {
+    const d = new DOMParser().parseFromString(str || '', 'text/html');
+    return (d.documentElement.textContent || '').trim();
+  }
+  function parseFeed(xml, src, gnews) {
+    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    if (doc.querySelector('parsererror')) return [];
+    let nodes = Array.from(doc.getElementsByTagName('item'));
+    if (!nodes.length) nodes = Array.from(doc.getElementsByTagName('entry'));
+    const txt = (n, tag) => { const e = n.getElementsByTagName(tag)[0]; return e ? (e.textContent || '').trim() : ''; };
+    const out = [];
+    nodes.slice(0, 25).forEach((n) => {
+      let title = decodeHtml(txt(n, 'title'));
+      let link = txt(n, 'link');
+      if (!link) { const l = n.getElementsByTagName('link')[0]; link = l ? l.getAttribute('href') || '' : ''; }
+      if (!title || !link) return;
+      if (gnews) title = title.replace(/\s+-\s+[^-]+$/, '');
+      const d = Date.parse(txt(n, 'pubDate') || txt(n, 'dc:date') || txt(n, 'published') || txt(n, 'updated')) || 0;
+      let img = '';
+      const mc = n.getElementsByTagName('media:content')[0] || n.getElementsByTagName('media:thumbnail')[0];
+      if (mc) img = mc.getAttribute('url') || '';
+      if (!img) {
+        const en = n.getElementsByTagName('enclosure')[0];
+        if (en && /image/.test(en.getAttribute('type') || 'image')) img = en.getAttribute('url') || '';
+      }
+      if (!img) {
+        const m = /<img[^>]+src=["']([^"']+)/i.exec(txt(n, 'content:encoded') || txt(n, 'description'));
+        if (m) img = m[1];
+      }
+      try { if (img) img = new URL(img.replace(/&amp;/g, '&'), link).href; } catch (e) { img = ''; }
+      out.push({ t: title, l: link, d, i: img, s: src.id, sn: src.name, dom: src.domain });
+    });
+    return out;
+  }
+  function scrapeItems(html, baseUrl, src) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const norm = (x) => x.replace(/^www\./, '');
+    let baseHost = '';
+    try { baseHost = norm(new URL(baseUrl).hostname); } catch (e) { return []; }
+    const bad = /\/(tag|tags|category|categories|author|authors|topic|topics|page|videos?|photos?|gallery|live-tv|about|contact|privacy|terms|advertise|search|login|epaper)(\/|$)/i;
+    const pickImg = (el) => {
+      const im = el && el.querySelector('img');
+      if (!im) return '';
+      const cand = im.getAttribute('data-src') || im.getAttribute('data-lazy-src') || im.getAttribute('data-original')
+        || (im.getAttribute('srcset') || '').split(',')[0].trim().split(' ')[0] || im.getAttribute('src') || '';
+      if (!cand || cand.startsWith('data:')) return '';
+      try { return new URL(cand, baseUrl).href; } catch (e) { return ''; }
+    };
+    const seenL = new Set(), seenT = new Set(), out = [];
+    for (const a of doc.querySelectorAll('a[href]')) {
+      if (out.length >= 25) break;
+      let u;
+      try { u = new URL(a.getAttribute('href'), baseUrl); } catch (e) { continue; }
+      if (!/^https?:$/.test(u.protocol) || norm(u.hostname) !== baseHost) continue;
+      if (src.scope && !u.pathname.startsWith(src.scope)) continue;
+      if (u.pathname.length < 15 || bad.test(u.pathname)) continue;
+      u.hash = '';
+      const link = u.href;
+      let title = (a.getAttribute('title') || a.getAttribute('aria-label') || a.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!title) { const im = a.querySelector('img'); title = im ? (im.getAttribute('alt') || '').trim() : ''; }
+      if (title.length < 18 || title.length > 220 || seenL.has(link) || seenT.has(title)) continue;
+      seenL.add(link); seenT.add(title);
+      let img = pickImg(a);
+      if (!img && a.parentElement && a.parentElement.querySelectorAll('a').length <= 3) img = pickImg(a.parentElement);
+      out.push({ t: title, l: link, d: 0, i: img, s: src.id, sn: src.name, dom: src.domain });
+    }
+    return out;
+  }
+  async function fetchSource(src) {
+    const isFeed = (x) => /<(rss|feed|rdf:RDF)/i.test(x.responseText.slice(0, 4000));
+    const isHtml = (x) => /<(html|head|body)/i.test(x.responseText.slice(0, 5000));
+    const parse = (r, g) => { const it = parseFeed(r.responseText, src, g); if (!it.length) throw new Error('empty'); return it; };
+    const fromUrl = (u) => netFetch(u, 'text', isFeed).then((r) => parse(r, false));
+    const scrape = () => netFetch(src.home, 'text', isHtml).then((r) => {
+      const it = scrapeItems(r.responseText, r.finalUrl || src.home, src);
+      if (it.length < 3) throw new Error('empty');
+      return it;
+    });
+    const gnews = () => netFetch('https://news.google.com/rss/search?q=' + encodeURIComponent(src.gq + ' when:2d') + '&hl=bn&gl=IN&ceid=IN:bn', 'text', isFeed).then((r) => parse(r, true));
+    return new Promise((resolve) => {
+      let settled = false, bStarted = false, gStarted = false, aFail = false, bFail = false, gFail = false, timer;
+      const fin = (v) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
+      const maybeEnd = () => { if (aFail && bFail && gFail) fin([]); };
+      const startG = () => {
+        if (gStarted || settled) return;
+        gStarted = true;
+        gnews().then(fin, () => { gFail = true; maybeEnd(); });
+      };
+      const startB = () => {
+        if (bStarted || settled) return;
+        bStarted = true;
+        if (!src.home) { bFail = true; startG(); return; }
+        scrape().then(fin, () => { bFail = true; startG(); maybeEnd(); });
+      };
+      // ১) RSS ঠিকানাগুলো একসাথে  ২) ৩.৫ সেকেন্ডে না এলে/ব্যর্থ হলে হোমপেজ থেকে  ৩) তাও না হলে Google News
+      firstOk(src.urls.map(fromUrl)).then(fin, () => { aFail = true; startB(); maybeEnd(); });
+      timer = setTimeout(startB, 3500);
+      setTimeout(() => fin([]), 25000);
+    });
+  }
+  async function fillImages(items) {
+    const todo = items.filter((it) => !it.i && !it.tried && !/news\.google\.com/.test(it.l)).slice(0, 24);
+    let idx = 0, timer;
+    const flush = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (items === FEED) { saveVal('hs_feed', { t: FEED_T, items: FEED }); renderFeed(); }
+      }, 500);
+    };
+    const worker = async () => {
+      while (idx < todo.length) {
+        const it = todo[idx++];
+        it.tried = true;
+        try {
+          const r = await netFetch(it.l, 'text', (x) => /<(html|head|meta)/i.test(x.responseText.slice(0, 5000)));
+          const html = r.responseText;
+          const m = /<meta[^>]+property=["']og:image["'][^>]*content=["']([^"']+)["']/i.exec(html)
+            || /<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:image["']/i.exec(html);
+          if (m) { it.i = new URL(m[1].replace(/&amp;/g, '&'), r.finalUrl || it.l).href; flush(); }
+        } catch (e) { /* ignore */ }
+      }
+    };
+    await Promise.all([worker(), worker(), worker(), worker()]);
+  }
+  async function refreshFeed(force) {
+    if (feedBusy) return;
+    if (!force && FEED.length && Date.now() - FEED_T < FEED_TTL) return;
+    feedBusy = true;
+    const old = FEED.slice();
+    const lists = FEEDS.map(() => null);
+    let any = false;
+    const merge = () => {
+      const ls = FEEDS.map((f, i) => {
+        const l = (lists[i] || old.filter((x) => x.s === f.id)).slice();
+        l.sort((a, b) => b.d - a.d);
+        return l;
+      });
+      const seen = new Set(), items = [];
+      for (let i = 0; i < PER_SOURCE; i++) {
+        ls.forEach((l) => { const it = l[i]; if (it && !seen.has(it.l)) { seen.add(it.l); items.push(it); } });
+      }
+      return items;
+    };
+    try {
+      // প্রতিটি সোর্স আসামাত্র দেখানো হবে (সবার জন্য অপেক্ষা নয়)
+      await Promise.all(FEEDS.map(async (f, i) => {
+        const items = await fetchSource(f).catch(() => []);
+        if (!items.length) return;
+        items.forEach((it) => { if (!it.i) { const o = old.find((x) => x.l === it.l); if (o && o.i) it.i = o.i; } });
+        lists[i] = items;
+        any = true;
+        FEED = merge();
+        FEED_T = Date.now();
+        saveVal('hs_feed', { t: FEED_T, items: FEED });
+        renderFeed();
+      }));
+      if (!any && !FEED.length) renderFeed(true);
+      fillImages(FEED);
+    } finally { feedBusy = false; }
+  }
+  function ago(ms) {
+    const m = Math.max(1, Math.round((Date.now() - ms) / 60000));
+    if (m < 60) return m + 'm';
+    const hr = Math.round(m / 60);
+    return hr < 24 ? hr + 'h' : Math.round(hr / 24) + 'd';
+  }
+  function feedImg(url, cls) {
+    const img = h('img', { class: cls, src: url, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer', draggable: 'false' });
+    let tried = false;
+    img.addEventListener('error', () => {
+      if (tried) { img.style.display = 'none'; return; }
+      tried = true;
+      netFetch(url, 'blob').then((r) => blobToDataURL(r.response)).then((d) => { img.src = d; }).catch(() => { img.style.display = 'none'; });
+    });
+    return img;
+  }
+  function shareItem(it) {
+    if (navigator.share) { navigator.share({ title: it.t, url: it.l }).catch(() => {}); return; }
+    try { navigator.clipboard.writeText(it.l); } catch (e) { /* ignore */ }
+  }
+  function openFeedMenu(it) {
+    openSheet('Story',
+      h('div', { class: 'row' },
+        h('button', { class: 'btn', text: 'Open', onclick: () => { location.href = it.l; } }),
+        h('button', { class: 'btn ghost', text: 'Copy link', onclick: () => { try { navigator.clipboard.writeText(it.l); } catch (e) { /* ignore */ } closeSheet(); } }),
+        h('button', {
+          class: 'btn ghost', text: 'Hide story', onclick: () => {
+            S.hidden = (S.hidden || []).concat(it.l).slice(-300);
+            save(); renderFeed(); closeSheet();
+          },
+        })));
+  }
+  function renderFeed(err) {
+    feedEl.replaceChildren();
+    const hidden = S.hidden || [];
+    const list = FEED.filter((x) => !hidden.includes(x.l));
+    if (!list.length) {
+      const msg = h('div', { class: 'fmsg', text: err ? "Couldn't load news. Tap to retry." : 'Loading news…' });
+      if (err) msg.addEventListener('click', () => { msg.textContent = 'Loading news…'; refreshFeed(true); });
+      feedEl.append(msg);
+      return;
+    }
+    list.forEach((it, i) => {
+      const fav = h('img', { class: 'fav', src: 'https://www.google.com/s2/favicons?sz=64&domain=' + encodeURIComponent(it.dom), alt: '' });
+      fav.addEventListener('error', () => { fav.style.visibility = 'hidden'; });
+      const shareBtn = h('button', { class: 'fbtn', 'aria-label': 'Share', onclick: (e) => { e.stopPropagation(); shareItem(it); } }, svg(ICON.share, '', '0 0 24 24'));
+      const moreBtn = h('button', { class: 'fbtn', 'aria-label': 'More', onclick: (e) => { e.stopPropagation(); openFeedMenu(it); } }, svg(ICON.more));
+      const meta = h('div', { class: 'fmeta' }, fav, h('span', { class: 'fsrc', text: it.sn }),
+        it.d ? h('span', { text: '· ' + ago(it.d) }) : null, h('span', { class: 'fgap' }), shareBtn, moreBtn);
+      const big = it.i && i % 3 !== 0;
+      const row = big
+        ? [feedImg(it.i, 'fimg'), h('div', { class: 'ft fbt', text: it.t }), meta]
+        : [h('div', { class: 'fa' }, h('div', { class: 'ft', text: it.t }), it.i ? feedImg(it.i, 'fthumb') : null), meta];
+      const el = h('div', { class: 'fi', role: 'link' }, row);
+      el.addEventListener('click', () => { location.href = it.l; });
+      feedEl.append(el);
+    });
+  }
+
+  /* ---------- Mount ---------- */
+  root.append(wall, page, topBar, menuScrim, menu, scrim, fileInput);
+  host.style.setProperty('visibility', 'visible', 'important');
+  document.body.appendChild(host);
+  renderTiles();
+  applyWallpaper();
+  applyTheme();
+  try {
+    const fc = loadVal('hs_feed', null);
+    if (fc && Array.isArray(fc.items)) { FEED = fc.items; FEED_T = fc.t || 0; }
+  } catch (e) { /* ignore */ }
+  renderFeed();
+  // নেটওয়ার্কের কাজ প্রথম ফ্রেম আঁকার পরে
+  (window.requestIdleCallback || ((f) => setTimeout(f, 60)))(() => { refreshDaily(false); refreshFeed(false); });
+  setInterval(() => refreshFeed(false), 2 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshFeed(false); });
+  // পুরনো (সম্ভবত ঝাপসা) সংরক্ষিত আইকন একবার নতুন নিয়মে আবার বাছাই
+  S.shortcuts.forEach((x) => { if (x.iconV !== 2) { delete x.icon; fetchIcon(x); } });
+})();
+</script>
+</body>
+</html>
